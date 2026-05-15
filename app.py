@@ -1,49 +1,52 @@
-import streamlit as st
-import pickle
-import numpy as np
 
-# تحميل الموديل الذكي
-try:
-    with open('diabetes_model.pkl', 'rb') as file:
-        model = pickle.load(file)
-except FileNotFoundError:
-    st.error("⚠️ خطأ: لم يتم العثور على ملف الموديل. تأكد من رفعه مع الكود.")
+model, scaler = load_artifacts()
+metrics = None
 
-# إعدادات الصفحة
-st.set_page_config(page_title="فحص السكري الذكي", page_icon="🏥", layout="wide")
+if model is None or scaler is None:
+    st.warning("No saved model found. Training a new model now.")
+    model, scaler, metrics = train_model(df)
+    st.success("Model trained and saved successfully.")
+else:
+    st.success("Loaded trained model from disk.")
 
-# تصميم الواجهة
-st.markdown("<h1 style='text-align: center; color: #2E7D32;'>🏥 نظام التشخيص الذكي لمرض السكري</h1>", unsafe_allow_html=True)
-st.write("<p style='text-align: center;'>هذا النظام يعتمد على خوارزميات تعلم الآلة للتنبؤ باحتمالية الإصابة</p>", unsafe_allow_html=True)
-st.markdown("---")
+if st.button("Retrain model"):
+    model, scaler, metrics = train_model(df)
+    st.success("Model retrained and saved successfully.")
 
-# تقسيم المدخلات في أعمدة
-col1, col2 = st.columns(2)
+if metrics is None:
+    X, y = prepare_features(df)
+    X_scaled = scaler.transform(X)
+    _, X_test, _, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
+    y_pred = model.predict(X_test)
+    metrics = {
+        "accuracy": accuracy_score(y_test, y_pred),
+        "confusion_matrix": confusion_matrix(y_test, y_pred),
+        "classification_report": classification_report(y_test, y_pred, output_dict=True),
+    }
 
-with col1:
-    preg = st.number_input("🤰 عدد مرات الحمل", min_value=0, max_value=20, value=0)
-    glu = st.number_input("🩸 مستوى الجلوكوز (بعد الصيام)", min_value=0, max_value=300, value=100)
-    bp = st.number_input("💓 ضغط الدم الانبساطي", min_value=0, max_value=150, value=70)
-    skin = st.number_input("📏 سمك طبقة الجلد (mm)", min_value=0, max_value=100, value=20)
+with st.expander("Model evaluation"):
+    st.write(f"**Accuracy:** {metrics['accuracy']:.3f}")
+    st.write("**Confusion matrix:**")
+    st.write(pd.DataFrame(metrics["confusion_matrix"], index=["Actual 0", "Actual 1"], columns=["Pred 0", "Pred 1"]))
+    st.write("**Classification report:**")
+    st.dataframe(pd.DataFrame(metrics["classification_report"]).transpose())
 
-with col2:
-    ins = st.number_input("💉 مستوى الأنسولين", min_value=0, max_value=900, value=80)
-    bmi = st.number_input("⚖️ مؤشر كتلة الجسم (BMI)", min_value=0.0, max_value=70.0, value=25.0)
-    dpf = st.number_input("🧬 عامل وراثة السكري", min_value=0.0, max_value=3.0, value=0.5)
-    age = st.number_input("📅 العمر", min_value=1, max_value=120, value=30)
-
-st.markdown("---")
-
-# تنفيذ التنبؤ
-if st.button("🔍 إجراء الفحص الآن"):
-    # ترتيب البيانات للموديل
-    features = np.array([[preg, glu, bp, skin, ins, bmi, dpf, age]])
-    prediction = model.predict(features)
-    prob = model.predict_proba(features)[0][1] * 100 # نسبة الاحتمالية
-
-    if prediction[0] == 1:
-        st.error(f"⚠️ النتيجة: المريض قد يكون مصاباً بالسكر بنسبة {prob:.1f}%")
-        st.info("نصيحة: يرجى استشارة الطبيب للقيام بفحص السكر التراكمي.")
+st.sidebar.header("Patient information")
+user_input = {}
+for feature in FEATURE_NAMES:
+    default = float(df[feature].median())
+    if feature in ["Pregnancies", "Age"]:
+        user_input[feature] = st.sidebar.number_input(feature, min_value=0.0, value=default, step=1.0)
     else:
-        st.success(f"✅ النتيجة: المريض سليم غالباً بنسبة {100-prob:.1f}%")
-        st.balloons()
+        user_input[feature] = st.sidebar.number_input(feature, min_value=0.0, value=default)
+
+if st.sidebar.button("Predict"):
+    result = predict_diabetes(user_input, model, scaler)
+    st.write(f"### Prediction: {result}")
+    st.write("#### Provided values")
+    st.json(user_input)
+
+st.sidebar.markdown(
+    "---\n"
+    "If you change the dataset or want to update the model, click **Retrain model**."
+)
